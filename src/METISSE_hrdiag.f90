@@ -35,10 +35,8 @@
         t => tarr(idd)
     endif
 
-
     
-    
-    debug = .false.
+    debug = .true.
 !   if ((id == 1).and. kw<=10 )debug = .true.
 !   if(id ==1 .and. t% is_he_track)debug = .true.
 

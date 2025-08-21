@@ -24,7 +24,7 @@ subroutine METISSE_star(kw,mass,mt,tm,tn,tscls,lums,GB,zpars,dtm,id)
     if(present(id)) idd = id
     t => tarr(idd)
             
-    debug = .false.
+    debug = .true.
 !    if ((id == 1) .and. kw>=1)debug = .true.
 !    if (t% star_type==rejuvenated) debug = .true.
 !if(id ==1 .and. t% is_he_track)debug = .true.

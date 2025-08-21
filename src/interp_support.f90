@@ -191,7 +191,7 @@ module interp_support
             cutoff = m_cutoff
             s => sa
         endif
-        
+
         if (mass > s(size(s))% initial_mass*1.01) then
             min_index = size(s)
             keyword = no_interpolation

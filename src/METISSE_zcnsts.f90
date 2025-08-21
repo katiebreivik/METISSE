@@ -1,6 +1,7 @@
 subroutine METISSE_zcnsts(z,zpars,ierr)
     use track_support
     use z_support
+    use metisse_interface
 
     real(dp), intent(in) :: z
     real(dp), intent(out) :: zpars(20)
@@ -11,7 +12,7 @@ subroutine METISSE_zcnsts(z,zpars,ierr)
     integer :: i,j,nloop, num_tracks
     logical :: load_tracks, debug
     
-    debug = .false.
+    debug = .true.
     ierr = 0
     ! At this point in the code front_end might not be assigned
     ! So we return ierr and let zcnsts.f of the overlying code
@@ -119,18 +120,37 @@ subroutine METISSE_zcnsts(z,zpars,ierr)
             ierr = 1
             return
         else
-            temp_filename = '.Zfilenames_H.txt'
-            call get_metallicity_file_list(METALLICITY_DIR,metallicity_file_list,temp_filename)
-                
-            if (.not. allocated(metallicity_file_list)) then
-                write(*,*) "METISSE error: metallicity file(s) not found in ", trim(METALLICITY_DIR)
-                write(*,*) "check if METALLICITY_DIR/path_to_tracks is correct"
-                ierr = 1
-                return
-            else
-                if(debug) print*,'metallicity files: ',metallicity_file_list
-                call get_metallicity_list(metallicity_file_list,Z_H)
-            endif
+            select case (front_end)
+            case (COSMIC)
+                ! filenames are provided by COSMIC
+                if (allocated(py_metallicity_file_list)) then
+                    if (allocated(metallicity_file_list)) deallocate(metallicity_file_list)
+                    allocate(metallicity_file_list(size(py_metallicity_file_list)))
+                    metallicity_file_list = py_metallicity_file_list
+                end if
+                ! the metallcity list: Z_H is also provided by COSMIC; see cosmic_metisse_interface.f90
+                if (allocated(py_Z_list)) then
+                    if (allocated(Z_H)) deallocate(Z_H)
+                    allocate(Z_H(size(py_Z_list)))
+                    Z_H = py_Z_list
+                end if
+            case default 
+                ! get list of metallicity files
+                ! these files contain information about eep tracks, their metallicity
+                temp_filename = '.Zfilenames_H.txt'
+                call get_metallicity_file_list(METALLICITY_DIR,metallicity_file_list,temp_filename)
+            
+
+                if (.not. allocated(metallicity_file_list)) then
+                    write(*,*) "METISSE error: metallicity file(s) not found in ", trim(METALLICITY_DIR)
+                    write(*,*) "check if METALLICITY_DIR/path_to_tracks is correct"
+                    ierr = 1
+                    return
+                else
+                    if(debug) print*,'metallicity files: ',metallicity_file_list
+                    call get_metallicity_list(metallicity_file_list,Z_H)
+                endif
+            end select
         endif
         
         if (len(trim(METALLICITY_DIR_HE))< 1) then
@@ -138,21 +158,40 @@ subroutine METISSE_zcnsts(z,zpars,ierr)
             write(out_unit,*) "Switching to SSE formulae for helium stars "
             use_sse_NHe = .true.
         else
-            temp_filename  = '.Zfilenames_He.txt'
-            call get_metallicity_file_list(METALLICITY_DIR_HE,metallicity_file_list_he,temp_filename)
+            select case (front_end)
+            case (COSMIC)
+                ! filenames are provided by COSMIC
+                if (allocated(py_metallicity_file_list_he)) then
+                    if (allocated(metallicity_file_list_he)) deallocate(metallicity_file_list_he)
+                    allocate(metallicity_file_list_he(size(py_metallicity_file_list_he)))
+                    metallicity_file_list_he = py_metallicity_file_list_he
+                end if
+                ! the metallcity list: Z_He is also provided by COSMIC; see cosmic_metisse_interface.f90
+                if (allocated(py_Z_list_he)) then
+                    if (allocated(Z_He)) deallocate(Z_He)
+                    allocate(Z_He(size(py_Z_list_he)))
+                    Z_He = py_Z_list_he
+                end if
+            case default 
+                ! get list of metallicity files
+                ! these files contain information about eep tracks, their metallicity
+                temp_filename  = '.Zfilenames_He.txt'
+                call get_metallicity_file_list(METALLICITY_DIR_HE,metallicity_file_list_he,temp_filename)
+            
 
-            if (.not. allocated(metallicity_file_list_he)) then
-                write(*,*) "METISSE error: metallicity file(s) not found in ", trim(METALLICITY_DIR_HE)
-                write(*,*) "check if METALLICITY_DIR_HE/path_to_he_tracks is correct"
-                ierr = 1
-                return
-            else
-                if(debug) print*,'metallicity files he : ', metallicity_file_list_he
-                call get_metallicity_list(metallicity_file_list_he,Z_He)
-            endif
+                if (.not. allocated(metallicity_file_list_he)) then
+                    write(*,*) "METISSE error: metallicity file(s) not found in ", trim(METALLICITY_DIR_HE)
+                    write(*,*) "check if METALLICITY_DIR_HE/path_to_he_tracks is correct"
+                    ierr = 1
+                    return
+                else
+                    if(debug) print*,'metallicity files he : ', metallicity_file_list_he
+                    call get_metallicity_list(metallicity_file_list_he,Z_He)
+                endif
+            end select
         endif
     endif
-    
+
     if (front_end > main) initial_Z = z
     write(out_unit,'(a,1p1e13.5)') ' Input Z is :', z
 
@@ -172,107 +211,162 @@ subroutine METISSE_zcnsts(z,zpars,ierr)
     i_he_age = -1
     
     do i = nloop,1, -1
-    
-        !read metallicity related variables
-        if (i == 2) then
-            write(out_unit,*) 'Reading naked helium star tracks'
-            call get_metallcity_file_from_Z(metallicity_file_list_he,Z_He,initial_Z,ierr)
-            if (ierr/=0) then
-                write(out_unit,'(a,1p1e13.5)')" No matching Z_files found with Z_accuracy_limit =",Z_accuracy_limit
-                write(out_unit,*)"Switching to SSE formulae for helium stars "
-                ierr = 0
-                use_sse_NHe = .true.
-                cycle
+        select case(front_end)
+        case(COSMIC)
+            ! COSMIC provides track_list and track_list_he
+            if (i == 2) then
+                ! Naked helium stars
+                if (allocated(py_track_list_he)) then
+                    if (allocated(track_list)) deallocate(track_list)
+                    allocate(track_list(size(py_track_list_he)))
+                    track_list = py_track_list_he
+                    USE_DIR = METALLICITY_DIR_HE
+                end if
+            else
+                ! Main hydrogen stars
+                if (allocated(py_track_list)) then
+                    if (allocated(track_list)) deallocate(track_list)
+                    allocate(track_list(size(py_track_list)))
+                    track_list = py_track_list
+                    USE_DIR = METALLICITY_DIR
+                end if
+            
             endif
-            write(out_unit,'(a,1p1e13.5)')" Found matching Z_files ",initial_Z
-          
-            USE_DIR = METALLICITY_DIR_HE
-            temp_filename = '.Mfilenames_He.txt'
+        
+        case default
+            !read metallicity related variables
+            if (i == 2) then
+                write(out_unit,*) 'Reading naked helium star tracks'
+                call get_metallcity_file_from_Z(metallicity_file_list_he,Z_He,initial_Z,ierr)
+                if (ierr/=0) then
+                    write(out_unit,'(a,1p1e13.5)')" No matching Z_files found with Z_accuracy_limit =",Z_accuracy_limit
+                    write(out_unit,*)"Switching to SSE formulae for helium stars "
+                    ierr = 0
+                    use_sse_NHe = .true.
+                    cycle
+                endif
+                write(out_unit,'(a,1p1e13.5)')" Found matching Z_files ",initial_Z
+              
+                USE_DIR = METALLICITY_DIR_HE
+                temp_filename = '.Mfilenames_He.txt'
+    
+            else
+                write(out_unit,*) 'Reading main (hydrogen star) tracks'
+                call get_metallcity_file_from_Z(metallicity_file_list,Z_H,initial_Z,ierr)
+                if (ierr/=0) then
+                    write(*,'(a,1p1e13.5)')" No matching Z_files found with Z_accuracy_limit =",Z_accuracy_limit
+                    write(*,*)"If needed, Z_accuracy_limit can be increased to match one of the available Z_files "
+                    write(*,'(1p100e13.5)') pack(Z_H, mask = Z_H>0)
+                    return
+                endif
+    
+                write(out_unit,'(a,1p1e13.5)')" Found matching Z_files ",initial_Z
+                USE_DIR = METALLICITY_DIR
+                temp_filename = '.Mfilenames_H.txt'
+            endif
+        end select
+        
+        ! read file-format is now done below in the select case for defuaul
+        ! since for COSMIC the format is applied directly when reading the files
 
-        else
-            write(out_unit,*) 'Reading main (hydrogen star) tracks'
-            call get_metallcity_file_from_Z(metallicity_file_list,Z_H,initial_Z,ierr)
+        select case(front_end)
+        
+        case(COSMIC)
+
+            ! assign the format file info
+            ! filenames are provided by COSMIC
+            ! COSMIC provides track_list and track_list_he
+            
+            if (i == 2) then
+                call apply_cosmic_format_controls('He')
+                num_tracks = size(track_list)
+                allocate(xa(num_tracks))
+                xa%filename = track_list
+                xa%is_he_track = .true.
+                call read_key_eeps_he()
+                if (debug) print*, "key eeps for he stars", key_eeps_he               
+            else
+                call apply_cosmic_format_controls('H')
+                num_tracks = size(track_list)
+                allocate(xa(num_tracks))
+                xa%filename = track_list
+                xa%is_he_track = .false.
+                call read_key_eeps()
+                if (debug) print*, "key eeps", key_eeps
+            endif
+            if (debug) print*, "num_tracks", num_tracks
+            call set_tracks_from_python_inputs(xa(1)%is_he_track)
+            if (debug) print*, "After setting tracks from python inputs"
+
+        case default
+            call read_format(USE_DIR,format_file,ierr); if (ierr/=0) return
+            ! get filenames from eep_tracks_dir
+            if (read_eep_files) file_extension = '.eep'
+            call get_files_from_path(eep_tracks_dir,file_extension,temp_filename,track_list,ierr)
+            
             if (ierr/=0) then
-                write(*,'(a,1p1e13.5)')" No matching Z_files found with Z_accuracy_limit =",Z_accuracy_limit
-                write(*,*)"If needed, Z_accuracy_limit can be increased to match one of the available Z_files "
-                write(*,'(1p100e13.5)') pack(Z_H, mask = Z_H>0)
+                eep_tracks_dir = trim(USE_DIR)//'/'//trim(eep_tracks_dir)
+                call get_files_from_path(eep_tracks_dir,file_extension,temp_filename,track_list,ierr)
+            endif
+
+            if (ierr/=0 ) then
+                print*,'METISSE error: failed to read input files.'
+                print*,'Check if eep_tracks_dir is correct.'
                 return
             endif
-
-            write(out_unit,'(a,1p1e13.5)')" Found matching Z_files ",initial_Z
-            USE_DIR = METALLICITY_DIR
-            temp_filename = '.Mfilenames_H.txt'
-        endif
-        
-        !read file-format
-        call read_format(USE_DIR,format_file,ierr); if (ierr/=0) return
+    
+            num_tracks = size(track_list)
             
-        !get filenames from eep_tracks_dir
-        if (read_eep_files) file_extension = '.eep'
-        call get_files_from_path(eep_tracks_dir,file_extension,temp_filename,track_list,ierr)
+            write(out_unit,*)"Found ", num_tracks, " tracks."
+            allocate(xa(num_tracks))
+            xa% filename = track_list
+            get_cols = .true.
+            
+            ! set_eeps
+            if (i == 2) then
+                xa% is_he_track = .true.
+                call read_key_eeps_he()
+                if (debug) print*, "key eeps for he stars", key_eeps_he
+            else
+                xa% is_he_track = .false.
+                call read_key_eeps()
+                if (debug) print*, "key eeps", key_eeps
+            endif
         
-        if (ierr/=0) then
-            eep_tracks_dir = trim(USE_DIR)//'/'//trim(eep_tracks_dir)
-            call get_files_from_path(eep_tracks_dir,file_extension,temp_filename,track_list,ierr)
-        endif
-        
-        if (ierr/=0 ) then
-            print*,'METISSE error: failed to read input files.'
-            print*,'Check if eep_tracks_dir is correct.'
-            return
-        endif
-        
-        num_tracks = size(track_list)
-        
-        write(out_unit,*)"Found ", num_tracks, " tracks."
-        allocate(xa(num_tracks))
-        xa% filename = track_list
-        get_cols = .true.
-        
-        ! set_eeps
-        if (i == 2) then
-            xa% is_he_track = .true.
-            call read_key_eeps_he()
-            if (debug) print*, "key eeps for he stars", key_eeps_he
-        else
-            xa% is_he_track = .false.
-            call read_key_eeps()
-            if (debug) print*, "key eeps", key_eeps
-        endif
-        
-        ! read input files
-        if (read_eep_files) then
-            if (debug) print*,"reading eep files"
-            do j=1,num_tracks
-                call read_eep(xa(j))
-                if (code_error) return
-!                if(debug) write(*,'(a100,f8.2,99i8)') trim(xa(j)% filename), xa(j)% initial_mass, xa(j)% ncol
-            end do
-        else
-            !read and store column names in temp_cols from the the file if header location is not provided
-            if (header_location<=0) then
-                if (debug) print*,"Reading column names from file"
-                call process_columns(column_name_file,temp_cols,ierr)
-                
-                if(ierr/=0) then
-                    print*,"Failed while trying to read column_name_file"
-                    print*,"Check if header location and column_name_file are correct "
-                    return
-                endif
-
-                if (size(temp_cols) /= total_cols) then
-                    print*,'Number of columns in the column_name_file does not matches with the total_cols'
-                    print*,'Check if column_name_file and total_cols are correct'
-                    return
-                endif
-            end if
-
-            do j=1,num_tracks
-                call read_input_file(xa(j))
-                if (code_error) return
-!                if(debug) write(*,'(a100,f8.2,99i8)') trim(xa(j)% filename), xa(j)% initial_mass, xa(j)% ncol
-            end do
-        endif
+            ! read input files
+            if (read_eep_files) then
+                if (debug) print*,"reading eep files"
+                do j=1,num_tracks
+                    call read_eep(xa(j))
+                    if (code_error) return
+!                    if(debug) write(*,'(a100,f8.2,99i8)') trim(xa(j)% filename), xa(j)% initial_mass, xa(j)% ncol
+                end do
+            else
+                !read and store column names in temp_cols from the the file if header location is not provided
+                if (header_location<=0) then
+                    if (debug) print*,"Reading column names from file"
+                    call process_columns(column_name_file,temp_cols,ierr)
+                    
+                    if(ierr/=0) then
+                        print*,"Failed while trying to read column_name_file"
+                        print*,"Check if header location and column_name_file are correct "
+                        return
+                    endif
+    
+                    if (size(temp_cols) /= total_cols) then
+                        print*,'Number of columns in the column_name_file does not matches with the total_cols'
+                        print*,'Check if column_name_file and total_cols are correct'
+                        return
+                    endif
+                end if
+    
+                do j=1,num_tracks
+                    call read_input_file(xa(j))
+                    if (code_error) return
+!                    if(debug) write(*,'(a100,f8.2,99i8)') trim(xa(j)% filename), xa(j)% initial_mass, xa(j)% ncol
+                end do
+            endif
+        end select
         
         call check_tracks(num_tracks)
 
@@ -293,6 +387,7 @@ subroutine METISSE_zcnsts(z,zpars,ierr)
             core_cols_he(2) = i_logL
             core_cols_he(3) = i_co_core
             if (i_he_RCO>0) core_cols_he(4) = i_he_RCO
+            if (debug) print*, 'core_cols_he', core_cols_he
         else
             !sort the array based on intial mass if not sorted already
             call sort_minitial()
@@ -300,6 +395,7 @@ subroutine METISSE_zcnsts(z,zpars,ierr)
             !and determine cutoff masses
             call set_zparameters(num_tracks,zpars)
             call copy_and_deallocatex(num_tracks,sa)
+            print*, sa% star_type
             
             call get_minmax(sa(1)% is_he_track,Mmax_array,Mmin_array)
             if (allocated(core_cols)) deallocate(core_cols)
@@ -317,6 +413,7 @@ subroutine METISSE_zcnsts(z,zpars,ierr)
         endif
         deallocate(track_list)
     end do
+
     
     ! for main, commons are assigned within the METISSE_main
     if (front_end > main) call assign_commons()
