@@ -58,7 +58,7 @@ module z_support
                         Lum_colname, Teff_colname, Radius_colname, &
                         he_core_mass, co_core_mass, he_core_radius, co_core_radius, &
                         log_Tc, c12_mass_frac, o16_mass_frac,he4_mass_frac, &
-                        mass_conv_envelope, radius_conv_envelope, binding_energy_colname
+                        mass_conv_envelope, radius_conv_envelope, binding_energy_colname, binding_energy_re_colname
                         
     contains
     
@@ -560,6 +560,11 @@ module z_support
             ! find the binding energy column, convert it to unit log BE later
         endif
 
+	i_binding_energy_re = -1
+        if (binding_energy_re_colname /= '') then
+            i_binding_energy_re = locate_column(cols, binding_energy_re_colname)
+        endif
+
         if (is_he_track) then
             if (co_core_radius/= '') i_he_RCO = locate_column(cols, co_core_radius)
             if (mass_conv_envelope/= '') i_he_mcenv = locate_column(cols, mass_conv_envelope)
@@ -653,7 +658,9 @@ module z_support
         if (i_logTe>0) call assign_sgl_col(temp, i_logTe, log_T_colname,n)
 
         if (i_binding_energy > 0) call assign_sgl_col(temp, i_binding_energy, binding_energy_colname, n)
-        if(is_he_track) then
+        if (i_binding_energy_re > 0) call assign_sgl_col(temp, i_binding_energy_re, binding_energy_re_colname, n)
+
+	if(is_he_track) then
             if (i_he_RCO >0) call assign_sgl_col(temp, i_he_RCO, co_core_radius,n)
             if (i_he_mcenv>0) call assign_sgl_col(temp, i_he_mcenv, mass_conv_envelope,n)
             if (i_he_Rcenv>0) call assign_sgl_col(temp, i_he_Rcenv, radius_conv_envelope,n)
@@ -729,7 +736,7 @@ module z_support
         integer, intent(out) :: ierr
         integer :: i, ncols(2), nchar, column_length, pass
         character(LEN=strlen) :: line, column_name
-        logical :: is_int,debug,res
+        logical :: is_int,debug, res
         type(column), allocatable, intent(out) :: cols(:)
         integer :: ncol,io
 
@@ -743,7 +750,7 @@ module z_support
         if (res .eqv. .False.) then
             if(debug) write(*,*)trim(filename),' not found; appending ',trim(USE_DIR)
             filename = trim(USE_DIR)//'/'//trim(filename)
-        endif
+        endif 
 
         open(io,file=trim(filename),action='read',status='old',iostat=ierr)
         if(ierr/=0) then
@@ -1083,10 +1090,12 @@ module z_support
             if (log_R_colname == '') call make_logcolumn(xa(n), i_logR)
             if (log_T_colname == '') call make_logcolumn(xa(n), i_logTe)
             
-            ! store core mass for processing binding energy
-            if (i_binding_energy > 0) then
+	    ! store core mass for processing binding energy
+            if (i_binding_energy > 0 .or. i_binding_energy_re > 0) then
                 allocate(core_mass(xa(n)% ntrack))
                 allocate(sgn(xa(n)% ntrack))
+                
+                ! determine core_mass array (same logic for both BE columns)
                 sgn = 1d0
                 if (xa(n)% is_he_track ) then
                     core_mass(:) = xa(n)% tr(i_co_core, :)
@@ -1106,10 +1115,22 @@ module z_support
                     endif
                 end if
                 
-                ! store log(binding energy) per envelope mass
-                sgn = sign(sgn, xa(n)% tr(i_binding_energy, :))
-                xa(n)% tr(i_binding_energy,:) = sgn * log10( abs(xa(n)% tr(i_binding_energy,:)) )
-                xa(n)% tr(i_binding_energy,:) = xa(n)% tr(i_binding_energy,:) / ( xa(n)% tr(i_mass,:) - core_mass(:))
+                ! process binding_energy (without recombination)
+                if (i_binding_energy > 0) then
+                    sgn = 1d0
+                    sgn = sign(sgn, xa(n)% tr(i_binding_energy, :))
+                    xa(n)% tr(i_binding_energy,:) = sgn * log10( abs(xa(n)% tr(i_binding_energy,:)) )
+                    xa(n)% tr(i_binding_energy,:) = xa(n)% tr(i_binding_energy,:) / ( xa(n)% tr(i_mass,:) - core_mass(:))
+                endif
+
+                ! process binding_energy_re (with recombination) — same transformation
+                if (i_binding_energy_re > 0) then
+                    sgn = 1d0
+                    sgn = sign(sgn, xa(n)% tr(i_binding_energy_re, :))
+                    xa(n)% tr(i_binding_energy_re,:) = sgn * log10( abs(xa(n)% tr(i_binding_energy_re,:)) )
+                    xa(n)% tr(i_binding_energy_re,:) = xa(n)% tr(i_binding_energy_re,:) / ( xa(n)% tr(i_mass,:) - core_mass(:))
+                endif
+
                 deallocate(sgn)
                 deallocate(core_mass)
             endif
@@ -1243,7 +1264,6 @@ module z_support
             x => sa_he
         else
             x => sa
-            Rmax = 0
         endif
         
         if (allocated(Mmax)) deallocate(Mmax, Mmin)
@@ -1252,6 +1272,7 @@ module z_support
         allocate(Mmax(nmax), Mmin(nmax))
         Mmax = 0.d0
         Mmin = huge(0.0d0)    !largest float
+        
         do i = 1,size(x)
             !Find maximum and minimum mass at each eep
             do j = 1, nmax
@@ -1260,13 +1281,9 @@ module z_support
                     Mmin(j) = min(Mmin(j),x(i)% tr(i_mass,j))
                 endif
             end do
-            ! Find max radius (used in determining limiting radius in case of extrapolation)
-            ! currently only for hydrogen stars
-            if (is_he_track.eqv..false.) Rmax = max(Rmax, maxval(x(i)% tr(i_logR,:)))
         end do
         
         nullify(x)
-
     end subroutine get_minmax
 
     subroutine set_zparameters(num_tracks,zpars)
@@ -1442,7 +1459,6 @@ module z_support
             call index_search (num_tracks, mass_list, Mcrit(i)% mass, min_index)
             !Once again, ensure that the location for Mup does not exceed Mec
             if (i ==6 .and. Mcrit(7)% loc>1) min_index = min(min_index,Mcrit(7)% loc-1)
-            if (min_index>size(mass_list)) cycle
             Mcrit(i)% mass = mass_list(min_index)
             Mcrit(i)% loc = min_index
             if (debug) print*, i, Mcrit(i)% mass, min_index
@@ -1708,6 +1724,8 @@ module z_support
             He4_mass_frac = py_He4_mass_frac_H
             c12_mass_frac = py_c12_mass_frac_H
             o16_mass_frac = py_o16_mass_frac_H
+	    binding_energy_colname = py_binding_energy_colname_H
+            binding_energy_re_colname = py_binding_energy_re_colname_H
 
         else if (track_type == 'He') then
             read_eep_files = py_read_eep_files_He
@@ -1738,6 +1756,8 @@ module z_support
             He4_mass_frac = py_He4_mass_frac_He
             c12_mass_frac = py_c12_mass_frac_He
             o16_mass_frac = py_o16_mass_frac_He
+            binding_energy_colname = py_binding_energy_colname_He
+            binding_energy_re_colname = py_binding_energy_re_colname_He
         end if
 
     end subroutine apply_cosmic_format_controls

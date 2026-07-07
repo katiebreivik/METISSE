@@ -1,6 +1,4 @@
 subroutine comenv_lambda(KW,M0,L,R,MENVD,LAMBDA,id,LAMBF)
-
-    ! get appropiate ZAMS radius and calculate common envelope lambda
     use track_support
     implicit none
     real(dp), intent(in):: M0,L,R,MENVD,LAMBDA
@@ -14,7 +12,6 @@ subroutine comenv_lambda(KW,M0,L,R,MENVD,LAMBDA,id,LAMBF)
     integer :: idd
     type(track), pointer :: t
 
-
     idd = 1
     if(present(id)) idd = id
 
@@ -27,13 +24,20 @@ subroutine comenv_lambda(KW,M0,L,R,MENVD,LAMBDA,id,LAMBF)
     else
         RZAMS = 10.d0**t% tr(i_logR,ZAMS_EEP)
     endif
+
+    if (LAMBDA < -1.5d0 .and. i_binding_energy_re > 0) then
+        LAMBF = - (t%pars%mass * (t%pars%mass - t%pars%core_mass)) / &
+         ((t%pars%binding_energy_re / 3.8d48) * R) !units core_mass in solar, BE in ergs
+
+    else if (LAMBDA < -0.5d0 .and. i_binding_energy > 0) then
+        LAMBF = - (t%pars%mass * (t%pars%mass - t%pars%core_mass)) / &
+         ((t%pars%binding_energy / 3.8d48) * R)
     
-    if (i_binding_energy > 0) then
-        LAMBF = - (t% pars% mass * (t% pars% mass - t% pars% core_mass)) / (t% pars% binding_energy * R)
     else
         LAMBF = CELAMF(KW,M0,L,R,RZAMS,MENVD,LAMBDA)
     endif
-    !comenv_lambda = LAMBF
+
+    LAMBF = MIN(100.0d0, LAMBF)
 
     nullify(t)
 end subroutine comenv_lambda

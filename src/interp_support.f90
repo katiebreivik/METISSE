@@ -727,16 +727,6 @@ module interp_support
             val = new_line(icolumn, 1)
         else
             call save_values(new_line, t% pars)
-            ! restrict radius from going beyond the hayashi
-            ! limit during extrapolation of hydrogen stars
-            if (t% is_he_track .eqv..false.) then
-                ! lim_R = 2*(3.762+(0.25*pars% log_L)-3.51)
-                ! if (pars% log_R > lim_R) pars% log_R = lim_R
-                if (t% pars% log_R > Rmax) t% pars% log_R = Rmax
-            endif
-            t% pars% radius = 10**t% pars% log_R
-            t% pars% Teff = 1000*((1130.d0*t% pars% luminosity/(t% pars% radius**2))**0.25)
-            t% pars% log_Teff = log10(t% pars% Teff)
         endif        
         deallocate(new_line)
 
@@ -744,6 +734,7 @@ module interp_support
             write(UNIT = err_unit, fmt=*)"METISSE error: mass < 0 in interpolate age",input_age, t% pars% phase
 !            call stop_code(err_unit)
         endif
+        if (debug_age) print*, 'exiting interpolate_age'
         
     end subroutine interpolate_age
     
@@ -867,12 +858,17 @@ module interp_support
         pars% McCO = new_line(i_co_core, 1)
         pars% log_L = new_line(i_logL, 1)
         pars% luminosity = 10**pars% log_L
+        pars% log_Teff = new_line(i_logTe, 1)
+        pars% Teff = 10**(pars% log_Teff)
         pars% log_R = new_line(i_logR, 1)
+    !        pars% log_R = 2*(3.762+(0.25*pars% log_L)-pars% log_Teff )
+    
+        !restrict radius from going beyond the hayashi
+        !limit during extrapolation
+        !lim_R = 2*(3.762+(0.25*pars% log_L)-3.555 )
+        !if (pars% log_R > lim_R) pars% log_R = lim_R
 
-        ! pars% log_R = 2*(3.762+(0.25*pars% log_L)-pars% log_Teff )
-
-        ! pars% log_Teff = new_line(i_logTe, 1)
-        ! pars% Teff = 10**(pars% log_Teff)
+        pars% radius = 10**pars% log_R
         pars% core_radius = -1.0
         
         if (pars% phase <= TPAGB) then
@@ -893,7 +889,7 @@ module interp_support
             if (i_he_rcenv > 0) pars% rcenv = new_line(i_he_rcenv, 1)
 !            if (i_he_MoI > 0) pars% moi = new_line(i_he_MoI, 1)
         endif
-
+        
         if (i_binding_energy > 0) then 
             env_mass = (pars% mass) - (pars% core_mass)
             if (env_mass >= 1d-5) then  ! catch if env_mass = 0
@@ -904,6 +900,17 @@ module interp_support
                 pars% binding_energy = 0.00
             endif
         endif
+
+        if (i_binding_energy_re > 0) then
+                env_mass = (pars% mass) - (pars% core_mass)
+                if (env_mass >= 1d-5) then
+                    pars% binding_energy_re = new_line(i_binding_energy_re, 1)
+                    sgn = sign(1d0, pars% binding_energy_re)
+                    pars% binding_energy_re = sgn*10 ** ( abs(pars% binding_energy_re*env_mass) )
+                else
+                    pars% binding_energy_re = 0.00
+                endif
+            endif
             
     end subroutine
                     
