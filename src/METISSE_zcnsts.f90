@@ -33,6 +33,16 @@ subroutine METISSE_zcnsts(z, zpars, ierr)
     
     if (allocated(sa) .eqv. .true.) then
         ! tracks have been loaded at least once, for initial_Z
+
+        ! Re-evaluate helium-track availability on every COSMIC entry.
+        ! This is required on reloads as use_sse_NHe is reset above.
+        if (front_end == COSMIC) then
+            if (.not. allocated(filenames_he_in)) then
+                use_sse_NHe = .true.
+            else
+                use_sse_NHe = .false.
+            endif
+        endif
         
         ! New tracks need to be loaded
         ! if input metallicity 'z' has changed significantly from the old 'initial_z'

@@ -40,7 +40,9 @@ subroutine METISSE_gntage(mc,mt,kw,zpars,m0,aj,id)
 !    if (t% pars% phase<=kw) t% pars% phase = kw+1
     t% star_type = rejuvenated
 
-    !TODO: provide a backup in case one of the mcrits are not defined
+    ! if the relevant Mcrit is undefined (no track exists for it,
+    ! e.g. it falls outside the loaded track grid), skip reclassification
+    ! rather than compare against the default mcy=0.d0
 
     if(kw.eq.4)then
     ! Set the minimum CHeB core mass (at BGB or He ignition)
@@ -48,10 +50,10 @@ subroutine METISSE_gntage(mc,mt,kw,zpars,m0,aj,id)
          if(Mcrit(4)% loc >0) then
              j = min(sa(Mcrit(4)% loc)% ntrack,cHeIgnition_EEP)
              mcy = sa(Mcrit(4)% loc)% tr(i_he_core,j)
-         endif
-         if(mc.le.mcy) then
-            kw = 3
-            if (debug) WRITE(*,*)' GNTAGE4: changed to 3'
+             if(mc.le.mcy) then
+                kw = 3
+                if (debug) WRITE(*,*)' GNTAGE4: changed to 3'
+             endif
          endif
       endif
 
@@ -61,12 +63,12 @@ subroutine METISSE_gntage(mc,mt,kw,zpars,m0,aj,id)
         if(Mcrit(5)% loc >0) then
             j = min(sa(Mcrit(5)% loc)% ntrack,cHeIgnition_EEP)
             mcy = sa(Mcrit(5)% loc)% tr(i_he_core,j)
+            if(mc.ge.mcy)then
+                kw = 4
+                aj = 0.d0
+               if (debug) WRITE(*,*)' GNTAGE3: changed to 4'
+             endif
         endif
-        if(mc.ge.mcy)then
-            kw = 4
-            aj = 0.d0
-           if (debug) WRITE(*,*)' GNTAGE3: changed to 4'
-         endif
       endif
 
     select case(kw)

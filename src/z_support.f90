@@ -1459,6 +1459,7 @@ module z_support
             call index_search (num_tracks, mass_list, Mcrit(i)% mass, min_index)
             !Once again, ensure that the location for Mup does not exceed Mec
             if (i ==6 .and. Mcrit(7)% loc>1) min_index = min(min_index,Mcrit(7)% loc-1)
+            if (min_index>size(mass_list)) cycle
             Mcrit(i)% mass = mass_list(min_index)
             Mcrit(i)% loc = min_index
             if (debug) print*, i, Mcrit(i)% mass, min_index
@@ -1602,6 +1603,7 @@ module z_support
         do i = 2, size(Mcrit_he)-1
             if (.not. defined(Mcrit_he(i)% mass)) cycle
             call index_search (num_tracks, mass_list, Mcrit_he(i)% mass, min_index)
+            if (min_index>size(mass_list)) cycle
             Mcrit_he(i)% mass = mass_list(min_index)
             Mcrit_he(i)% loc = min_index
         end do
@@ -1778,6 +1780,16 @@ module z_support
     
         ! Select appropriate input arrays
         if (is_he) then
+            if (.not. allocated(filenames_he_in) .or. .not. allocated(initial_mass_he_in) .or. &
+                .not. allocated(initial_Y_he_in) .or. .not. allocated(initial_Z_he_in) .or. &
+                .not. allocated(Fe_div_H_he_in) .or. .not. allocated(alpha_div_Fe_he_in) .or. &
+                .not. allocated(v_div_vcrit_he_in) .or. .not. allocated(ntrack_arr_he_in) .or. &
+                .not. allocated(neep_arr_he_in) .or. .not. allocated(ncol_arr_he_in) .or. &
+                .not. allocated(tr_data_he_in) .or. .not. allocated(col_names_he_in)) then
+                write(out_unit,*) 'METISSE error: helium tracks were requested but not initialized from Python inputs.'
+                code_error = .true.
+                return
+            endif
             ntracks_local = ntracks_he_in
             filenames = filenames_he_in
             initial_mass = initial_mass_he_in
@@ -1793,6 +1805,16 @@ module z_support
             tr_data = tr_data_he_in
             col_names = col_names_he_in
         else
+            if (.not. allocated(filenames_h_in) .or. .not. allocated(initial_mass_h_in) .or. &
+                .not. allocated(initial_Y_h_in) .or. .not. allocated(initial_Z_h_in) .or. &
+                .not. allocated(Fe_div_H_h_in) .or. .not. allocated(alpha_div_Fe_h_in) .or. &
+                .not. allocated(v_div_vcrit_h_in) .or. .not. allocated(ntrack_arr_h_in) .or. &
+                .not. allocated(neep_arr_h_in) .or. .not. allocated(ncol_arr_h_in) .or. &
+                .not. allocated(tr_data_h_in) .or. .not. allocated(col_names_h_in)) then
+                write(out_unit,*) 'METISSE error: hydrogen tracks were requested but not initialized from Python inputs.'
+                code_error = .true.
+                return
+            endif
             ntracks_local = ntracks_h_in
             filenames = filenames_h_in
             initial_mass = initial_mass_h_in
