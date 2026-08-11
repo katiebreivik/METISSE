@@ -854,7 +854,7 @@ module interp_support
         real(dp):: lim_R, env_mass, sgn
 
         pars% mass = new_line(i_mass, 1)
-        pars% McHe = new_line(i_he_core, 1)            
+        pars% McHe = new_line(i_he_core, 1)
         pars% McCO = new_line(i_co_core, 1)
         pars% log_L = new_line(i_logL, 1)
         pars% luminosity = 10**pars% log_L

@@ -549,7 +549,7 @@ module z_support
             
         i_he_core = locate_column(cols, he_core_mass, essential)
         i_co_core = locate_column(cols, co_core_mass, essential)
-        
+
         !Return if cannot locate any of the essential columns
         if (code_error) return
         

@@ -36,7 +36,7 @@
     endif
     
     debug = .false.
-!   if ((id == 1).and. kw<=10 )debug = .true.
+    if ((id == 1).and. kw<=10 )debug = .false.
 !   if(id ==1 .and. t% is_he_track)debug = .true.
 
     if (debug) print*, '-----------HRDIAG-------------'
