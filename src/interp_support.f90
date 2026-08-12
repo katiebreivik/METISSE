@@ -21,35 +21,34 @@ module interp_support
 
         integer:: iseg, keyword, min_index
         type(track), pointer:: a(:), s(:)
-        real(dp):: f(3), dx, x(4), y(4), alfa, beta
-        integer:: i, j, k, mlo, mhi, nt, age_col, start
-        integer, allocatable:: eeps(:), excl_cols(:)
-        
+        integer:: i, k, mlo, mhi, nt, age_col, start
+        integer, allocatable:: eeps(:), excl_cols(:), rows(:)
+        integer:: skel_lo, skel_hi
+        logical:: build_full
+
         debug_mass = .false.
 !        if(t% is_he_track)debug_mass = .true.
 
         if (debug_mass) print*, 'in interpolate_mass',t% initial_mass, t% pars% phase
         mass = t% initial_mass
-        
+
         if (mass /= mass .or. mass <= 0.d0) then
             write(UNIT = err_unit, fmt=*)"METISSE error: Encountered invalid mass value",mass, t% pars% phase
             t% ierr = -1
 !            call stop_code(err_unit)
             return
         endif
-        
-        dx = 0d0; alfa = 0d0; beta = 0d0; x = 0d0; y = 0d0
-        
+
         ! this line is to avoid array length problem with multiple calls to fix-track
         if (allocated(t% tr) .and. (.not.exclude_core)) call deallocate_arrays(t)
         if (allocated(t% bounds)) deallocate(t% bounds)
-        
+
         ! takes a set of EEP-tracks and find tracks for interpolation (a)
         call findtracks_for_interpolation(mass, t% is_he_track, t% bounds, min_index, keyword, iseg)
 
         mlo = 1
         mhi = size(t% bounds)
-        
+
         if(t% is_he_track) then
             a => sa_he(t% bounds(mlo):t% bounds(mhi))
             s => sa_he
@@ -65,14 +64,14 @@ module interp_support
             start = ZAMS_EEP
             eeps = key_eeps
         endif
-        
+
         k = minloc(a(mlo:mhi)% ntrack, dim = 1)
         t% min_index = min_index
-        
+
         if (debug_mass) print*,"mass, keyword", mass, keyword, t% is_he_track
         if (debug_mass) print*,"interpolate mass" , a% initial_mass
         if (debug_mass) print*,"interpolate ntrack" , a% ntrack
-        
+
         if (exclude_core) then
             nt = t% ntrack
             t% ntrack = min(nt, a(k)% ntrack)
@@ -83,59 +82,47 @@ module interp_support
             allocate(t% tr(t% ncol+1, t% ntrack))
             t% tr = 0d0
         endif
-        
-        
-        ! interpolate the new track for given initial mass
-        ! based on keyword
 
-        select case(keyword)
-        case(no_interpolation)
-            do j = 1, t% ncol
-                if (exclude_core .and. any(j .eq. excl_cols, 1)) cycle
-                t% tr(j, start:t% ntrack) = a(1)% tr(j, start:t% ntrack)
-            end do
-            
-        case(linear)
-            alfa = (t% initial_mass-a(mlo)% initial_mass)/(a(mhi)% initial_mass-a(mlo)% initial_mass)
-            beta = 1d0-alfa
-            do i = start, t% ntrack
-                do j = 1, t% ncol
-                    if (exclude_core .and. any(j .eq. excl_cols, 1)) cycle
-                    t% tr(j, i) = alfa*a(mhi)% tr(j, i) + beta*a(mlo)% tr(j, i)
-                enddo
-            enddo
+        t% mass_keyword = keyword
+        t% exclude_core = exclude_core
 
-        case(Steffen1990)
-            x = a(mlo:mhi)% initial_mass
-            dx = t% initial_mass-x(2)
-            do i = start, t% ntrack
-                do j = 1, t% ncol
-                    if (exclude_core .and. any(j .eq. excl_cols, 1)) cycle
-                    do k = 1, 4
-                        y(k) = a(k)% tr(j, i)
-                    enddo
-                    call interp_4pt_pm(x, y, f)
-                    t% tr(j, i) = y(2) + dx*(f(1) + dx*(f(2) + dx*f(3)))
-                enddo
-            enddo
-        end select
-        
-        if (fix_track) call check_length(iseg, t, min_index, exclude_core)
+        ! a short/incomplete input track (check_length below extends it by
+        ! extrapolation) needs the full range densely filled; windowing only
+        ! applies once the track is already long enough as-is
+        build_full = (.not. cmc_windowed_interp)
+        if (cmc_windowed_interp .and. fix_track) then
+            if (t% ntrack < get_min_ntrack(t% star_type, t% is_he_track)) build_full = .true.
+        endif
 
-        t% tr(i_age2, :) = t% tr(i_age2, :)*1E-6          !Myrs
-        if (start > 1) t% tr(:,1:start-1) = -1.d0
+        if (.not. build_full) then
+            ! cheap skeleton: primary EEP rows, plus (for H-tracks) the
+            ! TAMS_EEP:cHeIgnition_EEP block eagerly, since base_GB/bgb_mcenv
+            ! below need it at secondary-EEP resolution to locate j_bgb
+            call build_skeleton_rows(eeps, t% ntrack, start, t% is_he_track, rows, skel_lo, skel_hi)
 
-    
-        ! check if age is monotonically increasing
-        call mod_PAV(t% tr(i_age2, start:t% ntrack))
-        
-        ! check if mass is same or monotonically decreasing
-        call smooth_track(t, start)
-        
-        ! recalibrate age from ZAMS
-        
-!        t% tr(i_age2, :) = t% tr(i_age2, :)- t% tr(i_age2, start)
-        
+            ! interpolate the new track for given initial mass, based on keyword
+            call interpolate_rows(t, a, mlo, mhi, keyword, rows, exclude_core, excl_cols)
+
+            if (fix_track) call check_length(iseg, t, min_index, exclude_core)
+            if (start > 1) t% tr(:,1:start-1) = -1.d0
+
+            call finish_rows(t, rows)          !Myrs, age/mass monotonicity
+        else
+            ! interpolate the new track for given initial mass, based on keyword
+            call interpolate_rows(t, a, mlo, mhi, keyword, [(i, i = start, t% ntrack)], exclude_core, excl_cols)
+
+            if (fix_track) call check_length(iseg, t, min_index, exclude_core)
+
+            t% tr(i_age2, :) = t% tr(i_age2, :)*1E-6          !Myrs
+            if (start > 1) t% tr(:,1:start-1) = -1.d0
+
+            ! check if age is monotonically increasing
+            call mod_PAV(t% tr(i_age2, start:t% ntrack))
+
+            ! check if mass is same or monotonically decreasing
+            call smooth_track(t, start)
+        endif
+
         t% j_bgb = -1
         if (t% is_he_track .eqv. .false.) then
             !determine the base of the giant branch, if present
@@ -154,7 +141,17 @@ module interp_support
             endif
             if (exclude_core .eqv. .false.) t% j_bgb0 = t% j_bgb
         endif
-        
+
+        ! record how much of the track is actually filled at secondary-EEP
+        ! resolution, before t% ntrack potentially gets reset below
+        if (build_full) then
+            t% dense_seg_lo = start
+            t% dense_seg_hi = t% ntrack
+        else
+            t% dense_seg_lo = skel_lo
+            t% dense_seg_hi = skel_hi
+        endif
+
         if (exclude_core) then
 !            if (t% ntrack /= nt) write(UNIT = err_unit, fmt=*)'WARNING: track length changed',t% initial_mass, nt, t% ntrack
             t% ntrack = nt
@@ -165,9 +162,292 @@ module interp_support
             t% eep = pack(eeps, eeps <= t% ntrack)
             if (debug_mass) print*, 'eeps',t% neep, t% eep(t% neep), eeps(size(eeps))
         endif
-        
+
         nullify(a, s)
     end subroutine interpolate_mass
+
+    ! fills t% tr at exactly the given (not necessarily contiguous) rows,
+    ! for the mass-interpolation case given by keyword; no other side effects
+    subroutine interpolate_rows(t, a, mlo, mhi, keyword, rows, exclude_core, excl_cols)
+        implicit none
+        type(track), pointer:: t
+        type(track), pointer, intent(in):: a(:)
+        integer, intent(in):: mlo, mhi, keyword, rows(:)
+        logical, intent(in):: exclude_core
+        integer, intent(in):: excl_cols(:)
+
+        real(dp):: f(3), dx, x(4), y(4), alfa, beta
+        integer:: ii, i, j, k
+
+        dx = 0d0; alfa = 0d0; beta = 0d0; x = 0d0; y = 0d0
+
+        select case(keyword)
+        case(no_interpolation)
+            do j = 1, t% ncol
+                if (exclude_core .and. any(j .eq. excl_cols, 1)) cycle
+                t% tr(j, rows) = a(1)% tr(j, rows)
+            end do
+
+        case(linear)
+            alfa = (t% initial_mass-a(mlo)% initial_mass)/(a(mhi)% initial_mass-a(mlo)% initial_mass)
+            beta = 1d0-alfa
+            do ii = 1, size(rows)
+                i = rows(ii)
+                do j = 1, t% ncol
+                    if (exclude_core .and. any(j .eq. excl_cols, 1)) cycle
+                    t% tr(j, i) = alfa*a(mhi)% tr(j, i) + beta*a(mlo)% tr(j, i)
+                enddo
+            enddo
+
+        case(Steffen1990)
+            x = a(mlo:mhi)% initial_mass
+            dx = t% initial_mass-x(2)
+            do ii = 1, size(rows)
+                i = rows(ii)
+                do j = 1, t% ncol
+                    if (exclude_core .and. any(j .eq. excl_cols, 1)) cycle
+                    do k = 1, 4
+                        y(k) = a(k)% tr(j, i)
+                    enddo
+                    call interp_4pt_pm(x, y, f)
+                    t% tr(j, i) = y(2) + dx*(f(1) + dx*(f(2) + dx*f(3)))
+                enddo
+            enddo
+        end select
+    end subroutine interpolate_rows
+
+    ! primary-EEP-only row set (restricted to eeps >= start; anything before
+    ! start, e.g. a PreMS point, is outside the start:ntrack range that
+    ! interpolate_rows/mod_PAV/smooth_track ever fill -- rows below start are
+    ! left at the -1 placeholder, exactly as in the unwindowed path), plus
+    ! (H-tracks only) the TAMS_EEP:cHeIgnition_EEP block needed by
+    ! bgb_mcenv/base_GB; seg_lo/seg_hi describe that eager block so the
+    ! caller can record it as already densified (-1,-1 if none)
+    subroutine build_skeleton_rows(eeps, ntrack, start, is_he_track, rows, seg_lo, seg_hi)
+        implicit none
+        integer, intent(in):: eeps(:), ntrack, start
+        logical, intent(in):: is_he_track
+        integer, allocatable, intent(out):: rows(:)
+        integer, intent(out):: seg_lo, seg_hi
+        integer, allocatable:: primary_rows(:), all_rows(:)
+        integer:: i, hi
+
+        seg_lo = -1; seg_hi = -1
+        primary_rows = pack(eeps, eeps <= ntrack .and. eeps >= start)
+        if (.not. any(primary_rows == start)) primary_rows = [start, primary_rows]
+
+        if (.not. is_he_track) then
+            hi = min(cHeIgnition_EEP, ntrack)
+            if (TAMS_EEP > 0 .and. hi >= TAMS_EEP) then
+                seg_lo = TAMS_EEP
+                seg_hi = hi
+            endif
+        endif
+
+        if (seg_lo > 0) then
+            allocate(all_rows(size(primary_rows) + (seg_hi-seg_lo+1)))
+            all_rows(1:size(primary_rows)) = primary_rows
+            all_rows(size(primary_rows)+1:) = [(i, i = seg_lo, seg_hi)]
+        else
+            all_rows = primary_rows
+        endif
+
+        call unique_sorted(all_rows, rows)
+    end subroutine build_skeleton_rows
+
+    subroutine unique_sorted(a_in, a_out)
+        implicit none
+        integer, intent(in):: a_in(:)
+        integer, allocatable, intent(out):: a_out(:)
+        integer, allocatable:: tmp(:)
+        logical, allocatable:: keep(:)
+        integer:: i
+
+        tmp = a_in
+        call sort_int_array(tmp)
+        allocate(keep(size(tmp)))
+        keep = .true.
+        do i = 2, size(tmp)
+            if (tmp(i) == tmp(i-1)) keep(i) = .false.
+        end do
+        a_out = pack(tmp, keep)
+    end subroutine unique_sorted
+
+    subroutine sort_int_array(a)
+        implicit none
+        integer, intent(inout):: a(:)
+        integer:: i, j, key
+        do i = 2, size(a)
+            key = a(i)
+            j = i-1
+            do while (j >= 1)
+                if (a(j) <= key) exit
+                a(j+1) = a(j)
+                j = j-1
+            end do
+            a(j+1) = key
+        end do
+    end subroutine sort_int_array
+
+    ! same monotonic-mass repair as smooth_track (below), over an explicit
+    ! (possibly non-contiguous) row list instead of a contiguous range --
+    ! used for the windowed skeleton/segment builds
+    subroutine smooth_track_rows(t, rows)
+        implicit none
+        type(track), pointer:: t
+        integer, intent(in):: rows(:)
+        integer:: i
+
+        do i = 2, size(rows)
+            if (t% tr(i_mass, rows(i)) .le. 0.d0) then
+                ! although rare, sometime extrapolation can cause negative mass values
+                t% tr(i_mass, rows(i)) = t% tr(i_mass, rows(i-1))
+            else
+                t% tr(i_mass, rows(i)) = min(t% tr(i_mass, rows(i)), t% tr(i_mass, rows(i-1)))
+            endif
+        end do
+    end subroutine smooth_track_rows
+
+    ! post-processing for a just-filled (possibly non-contiguous) row range:
+    ! convert age from years to Myr, then repair monotonicity in age and mass.
+    ! mod_PAV's dummy is intent(inout), which Fortran does not allow a
+    ! vector-subscripted actual argument for, hence the explicit temp copy.
+    subroutine finish_rows(t, rows)
+        implicit none
+        type(track), pointer:: t
+        integer, intent(in):: rows(:)
+        real(dp), allocatable:: age_tmp(:)
+        integer:: sync_col
+
+        t% tr(i_age2, rows) = t% tr(i_age2, rows)*1.d-6
+        age_tmp = t% tr(i_age2, rows)
+        call mod_PAV(age_tmp)
+        t% tr(i_age2, rows) = age_tmp
+        call smooth_track_rows(t, rows)
+
+        ! keep the "old age" column in sync with i_age2 for whatever has been
+        ! densified so far. METISSE_star.f90 copies i_age2 -> i_age/i_he_age
+        ! only once, right after the initial (possibly skeleton-only) build;
+        ! find_neighboring_eeps searches using that column (i_age/i_he_age,
+        ! not i_age2 -- the pass=2/i_age2 branch in interpolate_age is
+        ! currently dead code, n_pass is hardcoded to 1), so any row filled
+        ! later by densify_segment/densify_full_track must refresh it here
+        ! or the bracket search goes stale past the initial skeleton.
+        sync_col = i_age
+        if (t% is_he_track) sync_col = i_he_age
+        t% tr(sync_col, rows) = t% tr(i_age2, rows)
+    end subroutine finish_rows
+
+    ! (cmc_windowed_interp only) fills in the secondary-EEP-resolution row
+    ! range bracketing age, if it isn't already densified; called from
+    ! find_neighboring_eeps right before it reads that range
+    subroutine densify_segment(t, age_col, age)
+        implicit none
+        type(track), pointer:: t
+        integer, intent(in):: age_col
+        real(dp), intent(in):: age
+        integer:: i, seg_lo, seg_hi, initial_eep, mlo, mhi, max_row
+        type(track), pointer:: a(:)
+        integer, allocatable:: excl_cols(:), rows(:)
+
+        if (.not. cmc_windowed_interp) return
+        if (t% neep < 2) return
+
+        initial_eep = ZAMS_EEP
+        if (t% is_he_track) initial_eep = ZAMS_HE_EEP
+
+        ! ages at/below the first primary eep, or at/above the last, resolve
+        ! to a single primary-eep row -- already present from the skeleton
+        if (age .le. t% tr(age_col, initial_eep)) return
+        if (age .ge. t% tr(age_col, t% eep(t% neep))) return
+
+        seg_lo = -1; seg_hi = -1
+        do i = 1, t% neep-1
+            if (t% eep(i) < initial_eep) cycle
+            if (age .le. t% tr(age_col, t% eep(i+1))) then
+                seg_lo = t% eep(i)
+                seg_hi = t% eep(i+1)
+                exit
+            endif
+        end do
+        if (seg_lo < 0) return
+
+        ! already densified (either this exact segment, or a full-track build)
+        if (seg_lo >= t% dense_seg_lo .and. seg_hi <= t% dense_seg_hi) return
+
+        mlo = 1
+        mhi = size(t% bounds)
+        if (t% is_he_track) then
+            a => sa_he(t% bounds(mlo):t% bounds(mhi))
+            excl_cols = core_cols_he
+        else
+            a => sa(t% bounds(mlo):t% bounds(mhi))
+            excl_cols = core_cols
+        endif
+
+        ! defensive: t% eep can be stale relative to t% bounds right after an
+        ! exclude_core call rebuilt the mass-neighbor tracks without
+        ! recomputing eeps -- never read past what those neighbors actually hold
+        max_row = minval(a(mlo:mhi)% ntrack)
+        if (seg_hi > max_row) seg_hi = max_row
+        if (seg_hi < seg_lo) then
+            nullify(a)
+            return
+        endif
+
+        rows = [(i, i = seg_lo, seg_hi)]
+        call interpolate_rows(t, a, mlo, mhi, t% mass_keyword, rows, t% exclude_core, excl_cols)
+        call finish_rows(t, rows)
+
+        t% dense_seg_lo = seg_lo
+        t% dense_seg_hi = seg_hi
+
+        nullify(a)
+    end subroutine densify_segment
+
+    ! (cmc_windowed_interp only) fills in the rest of the track at
+    ! secondary-EEP resolution; for the rare code paths that still need the
+    ! whole track (e.g. a maxval scan), rather than one bracketing segment
+    subroutine densify_full_track(t)
+        implicit none
+        type(track), pointer:: t
+        type(track), pointer:: a(:)
+        integer, allocatable:: excl_cols(:), rows(:)
+        integer:: mlo, mhi, start, i, max_row
+
+        if (.not. cmc_windowed_interp) return
+
+        start = ZAMS_EEP
+        if (t% is_he_track) start = ZAMS_HE_EEP
+
+        if (t% dense_seg_lo <= start .and. t% dense_seg_hi >= t% ntrack) return
+
+        mlo = 1
+        mhi = size(t% bounds)
+        if (t% is_he_track) then
+            a => sa_he(t% bounds(mlo):t% bounds(mhi))
+            excl_cols = core_cols_he
+        else
+            a => sa(t% bounds(mlo):t% bounds(mhi))
+            excl_cols = core_cols
+        endif
+
+        ! see the matching comment in densify_segment
+        max_row = min(t% ntrack, minval(a(mlo:mhi)% ntrack))
+        if (max_row < start) then
+            nullify(a)
+            return
+        endif
+
+        rows = [(i, i = start, max_row)]
+        call interpolate_rows(t, a, mlo, mhi, t% mass_keyword, rows, t% exclude_core, excl_cols)
+        call finish_rows(t, rows)
+
+        t% dense_seg_lo = start
+        t% dense_seg_hi = max_row
+
+        nullify(a)
+    end subroutine densify_full_track
 
     subroutine findtracks_for_interpolation(mass, is_he_track, bounds, min_index, keyword, iseg)
         ! takes a set of EEP-defined tracks and find tracks for interpolation
@@ -782,7 +1062,9 @@ module interp_support
         
         initial_eep = ZAMS_EEP
         if (t% is_he_track) initial_eep = ZAMS_HE_EEP
-        
+
+        if (cmc_windowed_interp) call densify_segment(t, age_col, age)
+
         if (age .lt. t% tr(age_col, initial_eep)) then
         ! check for lower boundary
             allocate(nbr_eeps(1))

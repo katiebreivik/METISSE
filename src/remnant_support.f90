@@ -1,6 +1,7 @@
  module remnant_support
     use track_support
     use sse_support
+    use interp_support, only: densify_full_track
     implicit none
     
     !flags to be used while making decision for which method to use
@@ -595,8 +596,10 @@
     !  rg = giant branch or Hayashi track radius, appropiate for the type.
     !       For kw=1 or 2 this is radius at BGB, and for kw=4 either GB or
     !       AGB radius at present luminosity.
+    ! not intent(in): the He_MS:He_GB/maxval branch below may need to
+    ! densify_full_track(t) under cmc_windowed_interp before reading t% tr
     implicit none
-    type(track), pointer, intent(in) :: t
+    type(track), pointer :: t
     real(dp), intent(out):: rg
     real(dp) :: Rbgb, Rbagb, Lbgb, Lbagb, L, alfa
     integer :: j
@@ -651,6 +654,7 @@
                         rg = t% tr(i_logR,j)
                         rg = 10.d0**rg
                     else
+                        if (cmc_windowed_interp) call densify_full_track(t)
                         rg = maxval(t% tr(i_logR,:))
                         rg = 10.d0**rg
                     endif
@@ -660,8 +664,8 @@
     end subroutine calculate_rg
     
     subroutine get_mcrenv_from_cols(t,lums,menv,renv,k2)
-    
-        type(track),pointer, intent(in) :: t
+    ! not intent(in): calls calculate_rg, which may densify_full_track(t)
+        type(track),pointer :: t
         real(dp), intent (in) :: lums(10)
         real(dp), intent(out) :: menv,renv,k2
         integer :: rcenv_col, mcenv_col!, moi_col

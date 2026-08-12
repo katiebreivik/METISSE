@@ -93,7 +93,7 @@ imf_support.o: $(METISSE_src_dir)/imf_support.f90 track_support.o
 z_support.o: $(METISSE_src_dir)/z_support.f90 track_support.o c_m_interface.o
 interp_support.o: $(METISSE_src_dir)/interp_support.f90 track_support.o
 sse_support.o: $(METISSE_src_dir)/sse_support.f90 track_support.o
-remnant_support.o: $(METISSE_src_dir)/remnant_support.f90 track_support.o sse_support.o
+remnant_support.o: $(METISSE_src_dir)/remnant_support.f90 track_support.o sse_support.o interp_support.o
 
 assign_commons.o: $(METISSE_src_dir)/assign_commons_other.f90 track_support.o remnant_support.o
 METISSE_miscellaneous.o: $(METISSE_src_dir)/METISSE_miscellaneous.f90 track_support.o

@@ -34,6 +34,10 @@ module track_support
     
     ! mode > 0 enables read-only mode for files when multi-threading in CMC
     integer:: mode = 0
+
+    ! when true (CMC only), interpolate_mass builds only a primary-EEP skeleton
+    ! and interpolate_age densifies just the track segment currently needed
+    logical:: cmc_windowed_interp = .false.
     
     character(len = strlen):: METISSE_DIR, METALLICITY_DIR, METALLICITY_DIR_HE
     character(len = strlen):: amuse_metisse_dir, amuse_metallicity_dir, amuse_metallicity_dir_he
@@ -195,6 +199,11 @@ module track_support
         integer:: ncol, ntrack, neep, min_index, j_bgb, j_bgb0
         integer:: star_type = unknown, ierr = 0
         integer, allocatable:: eep(:), bounds(:)
+
+        ! for cmc_windowed_interp: row range currently filled at secondary-EEP
+        ! resolution, and which mass-interpolation case built the skeleton
+        integer:: dense_seg_lo = -1, dense_seg_hi = -1, mass_keyword = -1
+        logical:: exclude_core = .false.
         type(column), allocatable:: cols(:)
 
         real(dp):: initial_mass, initial_Z, initial_Y, Fe_div_H,  v_div_vcrit, alpha_div_Fe
@@ -224,6 +233,27 @@ module track_support
     type(track), allocatable, target:: tarr(:)
     real(dp):: initial_Z
     logical:: code_error
+
+    ! persistent per-star track pool (cmc_windowed_interp/using_cmc only):
+    ! maps a CMC-supplied external id (permanent, globally unique, never
+    ! reused -- see get_track_slot/release_track_slot in
+    ! METISSE_miscellaneous.f90) to a slot in tarr, so a repeat call for the
+    ! same star reuses its existing tarr entry instead of rebuilding it.
+    ! open-addressing hash table, power-of-two sized, linear probing
+    integer(8), allocatable:: pool_hash_key(:)
+    integer, allocatable:: pool_hash_slot(:)
+    integer(8), parameter:: pool_hash_empty = -1_8
+    integer(8), parameter:: pool_hash_tomb = -2_8
+    integer:: pool_hash_count = 0
+
+    ! free-slot stack (released slots available for reuse) and high-water mark
+    integer, allocatable:: pool_free_slots(:)
+    integer:: pool_n_free = 0
+    integer:: pool_next_slot = 0
+
+    ! fixed slot reserved for id==0 (CMC's "no second star" sentinel for
+    ! single-star calls), bypasses the hash table entirely
+    integer:: pool_zero_slot = 0
     
     !variable declaration-- for main
     real(dp) :: number_of_tracks
