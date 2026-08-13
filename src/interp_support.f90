@@ -375,12 +375,41 @@ module interp_support
         ! already densified (either this exact segment, or a full-track build)
         if (seg_lo >= t% dense_seg_lo .and. seg_hi <= t% dense_seg_hi) return
 
+        ! t% bounds is set by the interpolate_mass call that produced this
+        ! track's skeleton; guard before dereferencing it since a bad/absent
+        ! value here would otherwise index sa/sa_he out of bounds below
+        if (.not. allocated(t% bounds)) then
+            write(UNIT = err_unit, fmt=*) &
+                'METISSE warning: densify_segment called with unallocated bounds', &
+                t% initial_mass, t% is_he_track, t% star_type, seg_lo, seg_hi
+            return
+        endif
+
         mlo = 1
         mhi = size(t% bounds)
+        if (mhi < mlo .or. t% bounds(mlo) < 1) then
+            write(UNIT = err_unit, fmt=*) &
+                'METISSE warning: densify_segment found invalid bounds', &
+                t% initial_mass, t% is_he_track, mlo, mhi
+            return
+        endif
+
         if (t% is_he_track) then
+            if (t% bounds(mhi) > size(sa_he)) then
+                write(UNIT = err_unit, fmt=*) &
+                    'METISSE warning: densify_segment bounds exceed sa_he', &
+                    t% initial_mass, t% bounds(mlo), t% bounds(mhi), size(sa_he)
+                return
+            endif
             a => sa_he(t% bounds(mlo):t% bounds(mhi))
             excl_cols = core_cols_he
         else
+            if (t% bounds(mhi) > size(sa)) then
+                write(UNIT = err_unit, fmt=*) &
+                    'METISSE warning: densify_segment bounds exceed sa', &
+                    t% initial_mass, t% bounds(mlo), t% bounds(mhi), size(sa)
+                return
+            endif
             a => sa(t% bounds(mlo):t% bounds(mhi))
             excl_cols = core_cols
         endif
