@@ -1094,6 +1094,42 @@ module interp_support
 
         if (cmc_windowed_interp) call densify_segment(t, age_col, age)
 
+        if (.not. allocated(t% tr)) then
+            write(UNIT = err_unit, fmt=*) &
+                'METISSE FATAL: find_neighboring_eeps: t% tr not allocated', &
+                t% initial_mass, t% is_he_track, t% star_type, age, age_col
+            call flush(err_unit)
+            stop 1
+        endif
+        if (age_col < 1 .or. age_col > size(t% tr, 1)) then
+            write(UNIT = err_unit, fmt=*) &
+                'METISSE FATAL: find_neighboring_eeps: age_col out of range', &
+                age_col, size(t% tr, 1), t% initial_mass, t% is_he_track
+            call flush(err_unit)
+            stop 1
+        endif
+        if (.not. allocated(t% eep)) then
+            write(UNIT = err_unit, fmt=*) &
+                'METISSE FATAL: find_neighboring_eeps: t% eep not allocated', &
+                t% initial_mass, t% is_he_track, t% star_type, t% neep
+            call flush(err_unit)
+            stop 1
+        endif
+        if (t% neep < 1 .or. t% neep > size(t% eep)) then
+            write(UNIT = err_unit, fmt=*) &
+                'METISSE FATAL: find_neighboring_eeps: neep out of range', &
+                t% neep, size(t% eep), t% initial_mass, t% is_he_track
+            call flush(err_unit)
+            stop 1
+        endif
+        if (t% eep(t% neep) < 1 .or. t% eep(t% neep) > size(t% tr, 2)) then
+            write(UNIT = err_unit, fmt=*) &
+                'METISSE FATAL: find_neighboring_eeps: eep(neep) out of range', &
+                t% eep(t% neep), size(t% tr, 2), t% neep, t% initial_mass, t% is_he_track
+            call flush(err_unit)
+            stop 1
+        endif
+
         if (age .lt. t% tr(age_col, initial_eep)) then
         ! check for lower boundary
             allocate(nbr_eeps(1))
