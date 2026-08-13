@@ -26,7 +26,12 @@
 
     idd = 1
     if(present(id)) idd = id
-    if(tarr(idd)% star_type == unknown)then
+    ! star_type==unknown always means no track has been built yet, but the
+    ! reverse isn't true: a slot can be non-unknown (e.g. CMC's shared id==0
+    ! "no companion" placeholder, classified remnant on first sight via
+    ! kw>=HeWD without ever going through interpolate_mass) and still have
+    ! no track. Check the actual invariant interpolate_age below needs.
+    if(tarr(idd)% star_type == unknown .or. (.not. allocated(tarr(idd)% tr)))then
         aj = 1.0d+10
         kw = 15
         r = 1d-10
