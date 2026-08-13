@@ -230,11 +230,21 @@ module interp_support
         integer, allocatable, intent(out):: rows(:)
         integer, intent(out):: seg_lo, seg_hi
         integer, allocatable:: primary_rows(:), all_rows(:)
-        integer:: i, hi
+        integer:: i, hi, final_row
 
         seg_lo = -1; seg_hi = -1
         primary_rows = pack(eeps, eeps <= ntrack .and. eeps >= start)
         if (.not. any(primary_rows == start)) primary_rows = [start, primary_rows]
+
+        ! calculate_timescales/calculate_he_timescales unconditionally read
+        ! age(Final_EEP)/age(Final_EEP_HE) right after this skeleton is built
+        ! to set t% times(11)/nuc_time -- make sure that row is never left at
+        ! its unfilled placeholder value, since Final_EEP(_HE) isn't always a
+        ! member of the primary eep list (e.g. real MIST tracks, where it can
+        ! sit past post_AGB_EEP)
+        final_row = min(merge(Final_EEP_HE, Final_EEP, is_he_track), ntrack)
+        if (final_row >= start .and. .not. any(primary_rows == final_row)) &
+            primary_rows = [primary_rows, final_row]
 
         if (.not. is_he_track) then
             hi = min(cHeIgnition_EEP, ntrack)
